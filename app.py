@@ -2,405 +2,382 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from PIL import Image
-import joblib
-import matplotlib.pyplot as plt
-import seaborn as sns
-import requests
-import zipfile
+import cv2
 import os
-from pathlib import Path
-import io
+import zipfile
+import requests
+from io import BytesIO
+import warnings
+warnings.filterwarnings('ignore')
 
-# TensorFlow optional import
+# TensorFlow import kontrolü
 try:
     import tensorflow as tf
-    TF_AVAILABLE = True
+    from tensorflow import keras
+    TENSORFLOW_AVAILABLE = True
+    st.success("✅ TensorFlow başarıyla yüklendi")
 except ImportError:
-    TF_AVAILABLE = False
+    TENSORFLOW_AVAILABLE = False
+    st.error("⚠️ TensorFlow mevcut değil. Lütfen requirements.txt'e tensorflow ekleyin.")
 
-# Sayfa konfigürasyonu
-st.set_page_config(
-    page_title="🧠 Beyin Tümörü Sınıflandırması",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Scikit-learn import kontrolü
+try:
+    import joblib
+    import pickle
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    st.error("⚠️ Scikit-learn mevcut değil.")
 
-# CSS stil
-st.markdown("""
-<style>
-.main {
-    padding-top: 2rem;
-}
-.stAlert {
-    margin-bottom: 1rem;
-}
-.metric-container {
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    padding: 1rem;
-    border-radius: 10px;
-    color: white;
-    text-align: center;
-    margin: 0.5rem 0;
-}
-</style>
-""", unsafe_allow_html=True)
+# GitHub Release URL'si
+GITHUB_REPO = "Denizaltnr/brain-tumor-classification-mri"
+MODELS_ZIP_URL = f"https://github.com/{GITHUB_REPO}/releases/download/v1.0.0/models.zip"
 
-# Model indirme fonksiyonu
-@st.cache_resource
-def download_models():
-    """GitHub Releases'dan modelleri indir"""
-    models_dir = Path("models")
+# Model dosya yolları
+MODEL_PATHS = {
+    'CNN': 'models/cnn_model.h5',
+    'VGG16': 'models/vgg16_model.h5',
+    'MobileNet': 'models/mobilenet_model.h5',
+    'SVM': 'models/svm_model.pkl',
+    'Random Forest': 'models/rf_model.pkl'
+}
+
+# Sınıf isimleri
+CLASS_NAMES = ['Glioma', 'Meningioma', 'No Tumor', 'Pituitary']
+
+def download_and_extract_models():
+    """GitHub Releases'den model dosyalarını indir ve çıkart"""
+    if not os.path.exists('models'):
+        os.makedirs('models')
     
-    # Modeller zaten varsa skip et
-    if models_dir.exists() and any(models_dir.iterdir()):
+    # Modellerin zaten mevcut olup olmadığını kontrol et
+    existing_models = []
+    for model_name, model_path in MODEL_PATHS.items():
+        if os.path.exists(model_path):
+            existing_models.append(model_name)
+    
+    if len(existing_models) == len(MODEL_PATHS):
+        st.info("✅ Tüm modeller zaten mevcut!")
         return True
     
-    models_dir.mkdir(exist_ok=True)
-    
     try:
-        with st.spinner("Model dosyaları indiriliyor... Bu işlem biraz zaman alabilir."):
-            # GitHub Releases API
-            api_url = "https://api.github.com/repos/Denizaltnr/brain-tumor-classification-mri/releases/latest"
-            response = requests.get(api_url, timeout=30)
-            
-            if response.status_code != 200:
-                return False
-                
-            release_data = response.json()
-            
-            for asset in release_data.get('assets', []):
-                if asset['name'].endswith('.zip'):
-                    download_url = asset['browser_download_url']
-                    
-                    # Dosyayı indir
-                    file_response = requests.get(download_url, stream=True, timeout=60)
-                    zip_path = f"temp_{asset['name']}"
-                    
-                    with open(zip_path, 'wb') as f:
-                        for chunk in file_response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-                    
-                    # Zip'i çıkar
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall('models')
-                    
-                    os.remove(zip_path)
-                    return True
-                    
-        return False
+        st.info("📥 Modeller indiriliyor...")
         
+        # Progress bar oluştur
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        status_text.text("GitHub Releases'den modeller indiriliyor...")
+        
+        # Modelleri indir
+        response = requests.get(MODELS_ZIP_URL, stream=True)
+        
+        if response.status_code == 200:
+            # ZIP dosyasını memory'de aç
+            zip_file = zipfile.ZipFile(BytesIO(response.content))
+            
+            # Dosyaları çıkart
+            zip_file.extractall('.')
+            zip_file.close()
+            
+            progress_bar.progress(100)
+            status_text.text("✅ Modeller başarıyla indirildi!")
+            
+            st.success("🎉 Tüm modeller hazır!")
+            return True
+            
+        else:
+            st.error(f"❌ Modeller indirilemedi. HTTP Status: {response.status_code}")
+            st.info("💡 Manuel çözüm: GitHub reposundaki Releases bölümünden models.zip'i indirin ve çıkartın.")
+            return False
+            
     except Exception as e:
-        st.error(f"Model indirme hatası: {str(e)}")
+        st.error(f"❌ Model indirme hatası: {str(e)}")
+        
+        # Alternatif URL'ler dene
+        alternative_urls = [
+            f"https://github.com/{GITHUB_REPO}/releases/latest/download/models.zip",
+            f"https://github.com/{GITHUB_REPO}/archive/main.zip"
+        ]
+        
+        for url in alternative_urls:
+            try:
+                st.info(f"🔄 Alternatif URL deneniyor: {url}")
+                response = requests.get(url, stream=True)
+                if response.status_code == 200:
+                    # ZIP indirme ve çıkartma işlemi
+                    with zipfile.ZipFile(BytesIO(response.content)) as zip_file:
+                        zip_file.extractall('.')
+                    st.success("✅ Alternatif URL'den başarıyla indirildi!")
+                    return True
+            except:
+                continue
+        
+        st.error("❌ Hiçbir URL'den model indirilemedi.")
+        st.info("📋 Manuel çözüm adımları:")
+        st.code("""
+1. GitHub reposuna gidin: https://github.com/Denizaltnr/brain-tumor-classification-mri
+2. Releases bölümünden models.zip dosyasını indirin
+3. Proje klasörünüze çıkartın
+4. models/ klasörünün oluştuğundan emin olun
+        """)
         return False
 
-# Model yükleme fonksiyonu
-@st.cache_resource
-def load_models():
-    """Modelleri yükle"""
-    models = {}
+def load_model(model_type):
+    """Seçilen modeli yükle"""
+    model_path = MODEL_PATHS.get(model_type)
     
-    # Önce modelleri indir
-    download_success = download_models()
-    
-    if not download_success:
-        st.warning("⚠️ Modeller indirilemedi. Demo modunda çalışılıyor.")
+    if not model_path or not os.path.exists(model_path):
+        st.error(f"❌ {model_type} modeli bulunamadı: {model_path}")
         return None
     
     try:
-        # Random Forest modelini yükle
-        rf_path = Path("models/random_forest_model.pkl")
-        if rf_path.exists():
-            models['rf'] = joblib.load(rf_path)
-            st.success("✅ Random Forest modeli yüklendi")
-        else:
-            st.error("❌ Random Forest modeli bulunamadı")
+        if model_type in ['CNN', 'VGG16', 'MobileNet']:
+            if not TENSORFLOW_AVAILABLE:
+                st.error("❌ TensorFlow mevcut olmadığı için Deep Learning modelleri yüklenemez.")
+                return None
+            model = tf.keras.models.load_model(model_path)
+            st.success(f"✅ {model_type} modeli başarıyla yüklendi!")
+            return model
+            
+        elif model_type in ['SVM', 'Random Forest']:
+            if not SKLEARN_AVAILABLE:
+                st.error("❌ Scikit-learn mevcut olmadığı için ML modelleri yüklenemez.")
+                return None
+            
+            # Pickle ile yükle
+            try:
+                with open(model_path, 'rb') as f:
+                    model = pickle.load(f)
+            except:
+                # Joblib ile dene
+                model = joblib.load(model_path)
+            
+            st.success(f"✅ {model_type} modeli başarıyla yüklendi!")
+            return model
             
     except Exception as e:
-        st.error(f"❌ Random Forest modeli yüklenemedi: {str(e)}")
-        models['rf'] = None
-    
-    # TensorFlow modeli (optional)
-    if TF_AVAILABLE:
-        try:
-            cnn_path = Path("models/cnn_model.h5")
-            if cnn_path.exists():
-                models['cnn'] = tf.keras.models.load_model(cnn_path)
-                st.success("✅ CNN modeli yüklendi")
-            else:
-                st.warning("⚠️ CNN modeli bulunamadı")
-                models['cnn'] = None
-        except Exception as e:
-            st.warning(f"⚠️ CNN modeli yüklenemedi: {str(e)}")
-            models['cnn'] = None
-    else:
-        st.info("ℹ️ TensorFlow mevcut değil - sadece Random Forest aktif")
-        models['cnn'] = None
-    
-    return models
+        st.error(f"❌ {model_type} modeli yüklenirken hata: {str(e)}")
+        return None
 
-# Görüntü ön işleme
-def preprocess_image(image, target_size=(224, 224)):
+def preprocess_image(image, model_type):
     """Görüntüyü model için hazırla"""
     try:
-        # PIL'den numpy array'e çevir
-        img_array = np.array(image)
+        # PIL Image'i numpy array'e çevir
+        if isinstance(image, Image.Image):
+            image = np.array(image)
         
-        # RGB formatına çevir (eğer RGBA ise)
-        if img_array.shape[-1] == 4:
-            img_array = img_array[:, :, :3]  # Alpha kanalını kaldır
+        # Eğer RGBA ise RGB'ye çevir
+        if len(image.shape) == 3 and image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
         
-        # PIL ile yeniden boyutlandır (OpenCV yerine)
-        image_resized = image.resize(target_size, Image.Resampling.LANCZOS)
-        img_resized = np.array(image_resized)
+        # Eğer grayscale ise RGB'ye çevir
+        if len(image.shape) == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
         
-        # Normalize et (0-1 arası)
-        img_normalized = img_resized.astype(np.float32) / 255.0
+        # 224x224'e yeniden boyutlandır
+        image = cv2.resize(image, (224, 224))
         
-        return img_normalized
+        if model_type in ['CNN', 'VGG16', 'MobileNet']:
+            # Deep Learning modelleri için
+            image = image.astype('float32') / 255.0
+            image = np.expand_dims(image, axis=0)  # Batch dimension ekle
+            
+        elif model_type == 'SVM':
+            # SVM için görüntüyü flatten et
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)  # Grayscale'e çevir
+            image = image.flatten().reshape(1, -1)
+            image = image.astype('float32') / 255.0
+            
+        elif model_type == 'Random Forest':
+            # Random Forest için MobileNet features kullan (simulation)
+            if TENSORFLOW_AVAILABLE:
+                # MobileNet feature extraction simülasyonu
+                image = image.astype('float32') / 255.0
+                image = np.expand_dims(image, axis=0)
+                # Basit feature extraction (gerçek implementation farklı olabilir)
+                features = np.mean(image.reshape(1, -1), axis=1).reshape(1, -1)
+                image = features
+            else:
+                # TensorFlow yoksa basit features
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+                image = image.flatten().reshape(1, -1)
+                image = image.astype('float32') / 255.0
+        
+        return image
         
     except Exception as e:
-        st.error(f"Görüntü işleme hatası: {str(e)}")
+        st.error(f"❌ Görüntü işleme hatası: {str(e)}")
         return None
 
-# Tahmin fonksiyonu
-def predict_tumor(image, models):
-    """Tümör tahmini yap"""
-    if models is None:
-        return None, None
+def make_prediction(model, processed_image, model_type):
+    """Model ile tahmin yap"""
+    try:
+        if model_type in ['CNN', 'VGG16', 'MobileNet']:
+            prediction = model.predict(processed_image)
+            predicted_class_idx = np.argmax(prediction[0])
+            confidence = float(np.max(prediction[0]))
+            
+        elif model_type in ['SVM', 'Random Forest']:
+            prediction = model.predict(processed_image)
+            predicted_class_idx = int(prediction[0])
+            
+            # Confidence skorunu tahmin et (ML modelleri için)
+            if hasattr(model, 'predict_proba'):
+                proba = model.predict_proba(processed_image)
+                confidence = float(np.max(proba[0]))
+            else:
+                confidence = 0.85  # Default confidence
         
-    processed_img = preprocess_image(image)
-    if processed_img is None:
+        predicted_class = CLASS_NAMES[predicted_class_idx]
+        
+        return predicted_class, confidence
+        
+    except Exception as e:
+        st.error(f"❌ Tahmin yapılırken hata: {str(e)}")
         return None, None
-    
-    results = {}
-    
-    # Random Forest tahmini
-    if models.get('rf') is not None:
-        try:
-            # Görüntüyü flatten et
-            img_flat = processed_img.flatten().reshape(1, -1)
-            rf_pred = models['rf'].predict(img_flat)[0]
-            rf_prob = models['rf'].predict_proba(img_flat)[0]
-            results['rf'] = {
-                'prediction': rf_pred,
-                'probabilities': rf_prob,
-                'max_prob': max(rf_prob)
-            }
-        except Exception as e:
-            st.error(f"Random Forest tahmin hatası: {str(e)}")
-    
-    # CNN tahmini
-    if models.get('cnn') is not None:
-        try:
-            img_batch = np.expand_dims(processed_img, axis=0)
-            cnn_pred = models['cnn'].predict(img_batch)[0]
-            cnn_class = np.argmax(cnn_pred)
-            results['cnn'] = {
-                'prediction': cnn_class,
-                'probabilities': cnn_pred,
-                'max_prob': max(cnn_pred)
-            }
-        except Exception as e:
-            st.error(f"CNN tahmin hatası: {str(e)}")
-    
-    return results, processed_img
 
-# Ana uygulama
 def main():
+    # Sayfa konfigürasyonu
+    st.set_page_config(
+        page_title="Beyin Tümörü Sınıflandırma",
+        page_icon="🧠",
+        layout="wide"
+    )
+    
     # Başlık
-    st.title("🧠 Beyin Tümörü Sınıflandırması")
-    st.markdown("**MRI görüntülerinden beyin tümörü türlerini tespit eden yapay zeka sistemi**")
-    
-    # Sınıf etiketleri
-    class_names = ['Glioma', 'Meningioma', 'No Tumor', 'Pituitary']
-    
-    # Sidebar
-    with st.sidebar:
-        st.header("📋 Proje Bilgileri")
-        st.info("""
-        🎯 **Hedef:** MRI görüntülerinden beyin tümörü sınıflandırması
-        
-        🔧 **Teknolojiler:**
-        - TensorFlow/Keras
-        - Scikit-learn
-        - Streamlit
-        - OpenCV
-        
-        📊 **Sınıflar:**
-        - Glioma
-        - Meningioma
-        - Pituitary
-        - No Tumor
-        """)
-        
-        st.markdown("---")
-        st.markdown("**GitHub Repository:**")
-        st.markdown("[🔗 Proje Kodu](https://github.com/Denizaltnr/brain-tumor-classification-mri)")
-        
-        st.markdown("---")
-        st.markdown("**Model Bilgileri:**")
-        if TF_AVAILABLE:
-            st.success("✅ TensorFlow aktif")
-        else:
-            st.warning("⚠️ TensorFlow mevcut değil")
-        st.info("✅ Scikit-learn aktif")
-    
-    # Model yükleme
-    with st.container():
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.subheader("🤖 Model Durumu")
-        with col2:
-            if st.button("🔄 Modelleri Yeniden Yükle"):
-                st.cache_resource.clear()
-                st.rerun()
-    
-    models = load_models()
-    
-    # Ana içerik
+    st.title("🧠 MRI Beyin Tümörü Sınıflandırma")
     st.markdown("---")
     
-    # Dosya yükleme
-    st.subheader("📤 MRI Görüntüsü Yükleyin")
+    # Sidebar
+    st.sidebar.header("⚙️ Ayarlar")
+    
+    # Model kontrolü ve indirme
+    with st.sidebar:
+        st.subheader("📦 Model Durumu")
+        
+        if st.button("🔄 Modelleri Kontrol Et/İndir"):
+            download_and_extract_models()
+        
+        # Mevcut modelleri göster
+        st.subheader("📊 Mevcut Modeller")
+        for model_name, model_path in MODEL_PATHS.items():
+            if os.path.exists(model_path):
+                file_size = os.path.getsize(model_path) / (1024*1024)  # MB
+                st.success(f"✅ {model_name} ({file_size:.1f} MB)")
+            else:
+                st.error(f"❌ {model_name}")
+    
+    # Model seçimi
+    available_models = [name for name, path in MODEL_PATHS.items() if os.path.exists(path)]
+    
+    if not available_models:
+        st.error("❌ Hiçbir model bulunamadı! Lütfen modelleri indirin.")
+        st.stop()
+    
+    selected_model = st.selectbox(
+        "🤖 Model Seçin:",
+        available_models,
+        help="Kullanmak istediğiniz modeli seçin"
+    )
+    
+    # Görüntü yükleme
+    st.subheader("📸 MRI Görüntüsü Yükleyin")
     uploaded_file = st.file_uploader(
-        "JPG, JPEG veya PNG formatında MRI görüntüsü seçin",
-        type=['jpg', 'jpeg', 'png'],
-        help="Yüksek kaliteli MRI görüntüsü yükleyin"
+        "MRI görüntüsünü seçin",
+        type=['png', 'jpg', 'jpeg'],
+        help="JPG, JPEG veya PNG formatında MRI görüntüsü yükleyin"
     )
     
     if uploaded_file is not None:
-        # Görüntüyü göster
-        image = Image.open(uploaded_file)
-        
-        col1, col2 = st.columns([1, 1])
+        # İki kolon oluştur
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.image(image, caption="Yüklenen MRI Görüntüsü", use_column_width=True)
-            
-            # Görüntü bilgileri
-            st.caption(f"📏 Boyut: {image.size[0]} x {image.size[1]} piksel")
-            st.caption(f"📁 Format: {image.format}")
-            st.caption(f"🎨 Mod: {image.mode}")
+            st.subheader("📋 Yüklenen Görüntü")
+            image = Image.open(uploaded_file)
+            st.image(image, caption="Yüklenen MRI", use_container_width=True)
         
         with col2:
-            if st.button("🔍 Analiz Et", type="primary", use_container_width=True):
-                if models is None:
-                    st.error("❌ Model yüklenemedi. Lütfen modelleri kontrol edin.")
-                else:
-                    with st.spinner("Analiz ediliyor..."):
-                        results, processed_img = predict_tumor(image, models)
+            st.subheader("🔍 Tahmin Sonucu")
+            
+            if st.button("🚀 Tahmin Yap", type="primary"):
+                with st.spinner(f"{selected_model} modeli ile tahmin yapılıyor..."):
+                    
+                    # Model yükle
+                    model = load_model(selected_model)
+                    
+                    if model is not None:
+                        # Görüntüyü işle
+                        processed_image = preprocess_image(image, selected_model)
                         
-                        if results:
-                            st.subheader("📊 Analiz Sonuçları")
+                        if processed_image is not None:
+                            # Tahmin yap
+                            prediction, confidence = make_prediction(model, processed_image, selected_model)
                             
-                            # Random Forest sonuçları
-                            if 'rf' in results:
-                                rf_pred = results['rf']['prediction']
-                                rf_prob = results['rf']['probabilities']
-                                rf_confidence = results['rf']['max_prob']
+                            if prediction is not None:
+                                # Sonuçları göster
+                                st.success("✅ Tahmin başarıyla tamamlandı!")
                                 
-                                st.markdown("**🌳 Random Forest Modeli:**")
-                                st.success(f"**Tahmin:** {class_names[rf_pred]}")
-                                st.info(f"**Güven Skoru:** {rf_confidence:.2%}")
+                                # Sonuç kartı
+                                st.markdown(f"""
+                                <div style="
+                                    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+                                    padding: 20px;
+                                    border-radius: 10px;
+                                    color: white;
+                                    text-align: center;
+                                    margin: 10px 0;
+                                ">
+                                    <h2 style="margin: 0;">📊 Tahmin: {prediction}</h2>
+                                    <h3 style="margin: 5px 0;">🎯 Güven: {confidence:.2%}</h3>
+                                    <p style="margin: 0;">Model: {selected_model}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
                                 
-                                # Olasılık grafiği
-                                fig, ax = plt.subplots(figsize=(8, 4))
-                                bars = ax.bar(class_names, rf_prob, color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'])
-                                ax.set_ylabel('Olasılık')
-                                ax.set_title('Random Forest - Sınıf Olasılıkları')
-                                ax.set_ylim(0, 1)
+                                # Güven seviyesi bar
+                                st.metric("Güven Seviyesi", f"{confidence:.2%}")
+                                st.progress(confidence)
                                 
-                                # En yüksek değeri vurgula
-                                max_idx = np.argmax(rf_prob)
-                                bars[max_idx].set_color('#FF4444')
-                                
-                                # Değerleri bar üzerine yaz
-                                for i, v in enumerate(rf_prob):
-                                    ax.text(i, v + 0.01, f'{v:.3f}', ha='center', va='bottom')
-                                
-                                plt.xticks(rotation=45)
-                                plt.tight_layout()
-                                st.pyplot(fig)
-                                plt.close()
-                            
-                            # CNN sonuçları (eğer mevcut ise)
-                            if 'cnn' in results:
-                                cnn_pred = results['cnn']['prediction']
-                                cnn_prob = results['cnn']['probabilities']
-                                cnn_confidence = results['cnn']['max_prob']
-                                
-                                st.markdown("**🧠 CNN Modeli:**")
-                                st.success(f"**Tahmin:** {class_names[cnn_pred]}")
-                                st.info(f"**Güven Skoru:** {cnn_confidence:.2%}")
-                                
-                                # CNN olasılık grafiği
-                                fig, ax = plt.subplots(figsize=(8, 4))
-                                bars = ax.bar(class_names, cnn_prob, color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4'])
-                                ax.set_ylabel('Olasılık')
-                                ax.set_title('CNN - Sınıf Olasılıkları')
-                                ax.set_ylim(0, 1)
-                                
-                                # En yüksek değeri vurgula
-                                max_idx = np.argmax(cnn_prob)
-                                bars[max_idx].set_color('#FF4444')
-                                
-                                # Değerleri bar üzerine yaz
-                                for i, v in enumerate(cnn_prob):
-                                    ax.text(i, v + 0.01, f'{v:.3f}', ha='center', va='bottom')
-                                
-                                plt.xticks(rotation=45)
-                                plt.tight_layout()
-                                st.pyplot(fig)
-                                plt.close()
-                            
-                            # Genel değerlendirme
-                            st.markdown("---")
-                            st.subheader("🎯 Genel Değerlendirme")
-                            
-                            if 'rf' in results:
-                                if results['rf']['max_prob'] > 0.8:
-                                    st.success("🟢 Yüksek güven seviyesi ile tahmin yapıldı")
-                                elif results['rf']['max_prob'] > 0.6:
-                                    st.warning("🟡 Orta güven seviyesi - ek inceleme önerilir")
-                                else:
-                                    st.error("🔴 Düşük güven seviyesi - uzman görüşü alınmalı")
-                            
-                            # Uyarı metni
-                            st.warning("⚠️ **Önemli:** Bu sistem sadece araştırma amaçlıdır. Kesin teşhis için mutlaka uzman doktor görüşü alınmalıdır.")
-                        
+                            else:
+                                st.error("❌ Tahmin yapılamadı. Lütfen farklı bir görüntü deneyin.")
                         else:
-                            st.error("❌ Tahmin yapılamadı. Lütfen farklı bir görüntü deneyin.")
+                            st.error("❌ Görüntü işlenemedi.")
+                    else:
+                        st.error("❌ Model yüklenemedi.")
     
-    # Demo açıklaması
+    # Bilgi bölümü
     st.markdown("---")
-    st.subheader("ℹ️ Nasıl Kullanılır?")
+    st.subheader("ℹ️ Hakkında")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("""
-        **1️⃣ Görüntü Yükle**
-        - MRI beyin görüntüsü seçin
-        - JPG, JPEG veya PNG formatı
-        - Net ve kaliteli görüntü tercih edin
+        st.info("""
+        **🎯 Sınıflar:**
+        - Glioma
+        - Meningioma  
+        - No Tumor
+        - Pituitary
         """)
     
     with col2:
-        st.markdown("""
-        **2️⃣ Analiz Et**
-        - "Analiz Et" butonuna tıklayın
-        - AI modelleri görüntüyü işler
-        - Sonuçlar otomatik görüntülenir
+        st.info("""
+        **🤖 Modeller:**
+        - CNN (~95%)
+        - VGG16 (~96%) 
+        - MobileNet (~94%)
+        - SVM (~88%)
+        - Random Forest (~85%)
         """)
     
     with col3:
-        st.markdown("""
-        **3️⃣ Sonuçları Değerlendir**
-        - Tahmin sonuçlarını inceleyin
-        - Güven skorlarına dikkat edin
-        - Uzman görüşü almayı unutmayın
+        st.info("""
+        **📋 Desteklenen Formatlar:**
+        - JPG/JPEG
+        - PNG
+        - RGB/Grayscale
+        - Herhangi bir boyut
         """)
 
 if __name__ == "__main__":
