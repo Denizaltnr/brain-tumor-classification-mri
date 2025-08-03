@@ -15,8 +15,10 @@ import io
 try:
     import tensorflow as tf
     TF_AVAILABLE = True
+    st.success("✅ TensorFlow mevcut")
 except ImportError:
     TF_AVAILABLE = False
+    st.warning("⚠️ TensorFlow mevcut değil")
 
 # Sayfa konfigürasyonu
 st.set_page_config(
@@ -46,7 +48,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Model indirme fonksiyonu
+# Model indirme fonksiyonu - Düzeltildi
 @st.cache_resource
 def download_models():
     """GitHub Releases'dan modelleri indir"""
@@ -54,48 +56,66 @@ def download_models():
     
     # Modeller zaten varsa skip et
     if models_dir.exists() and any(models_dir.iterdir()):
+        st.info("✅ Modeller zaten mevcut")
         return True
     
     models_dir.mkdir(exist_ok=True)
     
     try:
         with st.spinner("Model dosyaları indiriliyor... Bu işlem biraz zaman alabilir."):
-            # GitHub Releases API
-            api_url = "https://api.github.com/repos/Denizaltnr/brain-tumor-classification-mri/releases/latest"
-            response = requests.get(api_url, timeout=30)
+            # Doğrudan GitHub Releases URL'si
+            repo_url = "https://github.com/Denizaltnr/brain-tumor-classification-mri"
             
-            if response.status_code != 200:
-                return False
-                
-            release_data = response.json()
+            # Alternatif indirme yöntemleri
+            download_urls = [
+                f"{repo_url}/releases/download/v1.0.0/models.zip",
+                f"{repo_url}/releases/download/v1.0/models.zip",
+                f"{repo_url}/releases/latest/download/models.zip"
+            ]
             
-            for asset in release_data.get('assets', []):
-                if asset['name'].endswith('.zip'):
-                    download_url = asset['browser_download_url']
+            for download_url in download_urls:
+                try:
+                    st.info(f"🔄 Deneniyor: {download_url}")
                     
                     # Dosyayı indir
-                    file_response = requests.get(download_url, stream=True, timeout=60)
-                    zip_path = f"temp_{asset['name']}"
+                    response = requests.get(download_url, stream=True, timeout=60)
                     
-                    with open(zip_path, 'wb') as f:
-                        for chunk in file_response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
+                    if response.status_code == 200:
+                        zip_path = "models_temp.zip"
+                        
+                        with open(zip_path, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                        
+                        # Zip'i çıkar
+                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                            zip_ref.extractall('.')
+                        
+                        os.remove(zip_path)
+                        st.success("✅ Modeller başarıyla indirildi!")
+                        return True
+                        
+                except Exception as e:
+                    st.warning(f"⚠️ Bu URL başarısız: {str(e)}")
+                    continue
+            
+            # Hiçbiri çalışmazsa manuel indirme talimatı
+            st.error("❌ Otomatik indirme başarısız!")
+            st.info("""
+            **Manuel İndirme Adımları:**
+            1. Bu linki ziyaret edin: https://github.com/Denizaltnr/brain-tumor-classification-mri/releases
+            2. En son release'den models.zip dosyasını indirin
+            3. Proje dizininizde çıkartın
+            4. models/ klasörünün oluştuğundan emin olun
+            """)
+            return False
                     
-                    # Zip'i çıkar
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall('models')
-                    
-                    os.remove(zip_path)
-                    return True
-                    
-        return False
-        
     except Exception as e:
         st.error(f"Model indirme hatası: {str(e)}")
         return False
 
-# Model yükleme fonksiyonu
+# Model yükleme fonksiyonu - Düzeltildi
 @st.cache_resource
 def load_models():
     """Modelleri yükle"""
@@ -105,34 +125,55 @@ def load_models():
     download_success = download_models()
     
     if not download_success:
-        st.warning("⚠️ Modeller indirilemedi. Demo modunda çalışılıyor.")
-        return None
+        st.warning("⚠️ Modeller indirilemedi. Mevcut modeller kontrol ediliyor...")
     
-    try:
-        # Random Forest modelini yükle
-        rf_path = Path("models/random_forest_model.pkl")
+    # Model dosya yolları - Düzeltildi
+    model_paths = {
+        'rf': [
+            Path("models/rf_model.pkl"),
+            Path("models/random_forest_model.pkl"),
+            Path("models/rf.pkl")
+        ],
+        'cnn': [
+            Path("models/cnn_model.h5"),
+            Path("models/cnn.h5"),
+            Path("models/brain_tumor_cnn.h5")
+        ]
+    }
+    
+    # Random Forest modelini yükle
+    rf_loaded = False
+    for rf_path in model_paths['rf']:
         if rf_path.exists():
-            models['rf'] = joblib.load(rf_path)
-            st.success("✅ Random Forest modeli yüklendi")
-        else:
-            st.error("❌ Random Forest modeli bulunamadı")
-            
-    except Exception as e:
-        st.error(f"❌ Random Forest modeli yüklenemedi: {str(e)}")
+            try:
+                models['rf'] = joblib.load(rf_path)
+                st.success(f"✅ Random Forest modeli yüklendi: {rf_path.name}")
+                rf_loaded = True
+                break
+            except Exception as e:
+                st.warning(f"⚠️ {rf_path.name} yüklenemedi: {str(e)}")
+                continue
+    
+    if not rf_loaded:
+        st.error("❌ Random Forest modeli bulunamadı")
         models['rf'] = None
     
     # TensorFlow modeli (optional)
     if TF_AVAILABLE:
-        try:
-            cnn_path = Path("models/cnn_model.h5")
+        cnn_loaded = False
+        for cnn_path in model_paths['cnn']:
             if cnn_path.exists():
-                models['cnn'] = tf.keras.models.load_model(cnn_path)
-                st.success("✅ CNN modeli yüklendi")
-            else:
-                st.warning("⚠️ CNN modeli bulunamadı")
-                models['cnn'] = None
-        except Exception as e:
-            st.warning(f"⚠️ CNN modeli yüklenemedi: {str(e)}")
+                try:
+                    models['cnn'] = tf.keras.models.load_model(cnn_path)
+                    st.success(f"✅ CNN modeli yüklendi: {cnn_path.name}")
+                    cnn_loaded = True
+                    break
+                except Exception as e:
+                    st.warning(f"⚠️ {cnn_path.name} yüklenemedi: {str(e)}")
+                    continue
+        
+        if not cnn_loaded:
+            st.warning("⚠️ CNN modeli bulunamadı")
             models['cnn'] = None
     else:
         st.info("ℹ️ TensorFlow mevcut değil - sadece Random Forest aktif")
@@ -140,7 +181,7 @@ def load_models():
     
     return models
 
-# Görüntü ön işleme
+# Görüntü ön işleme - Düzeltildi
 def preprocess_image(image, target_size=(224, 224)):
     """Görüntüyü model için hazırla"""
     try:
@@ -148,12 +189,22 @@ def preprocess_image(image, target_size=(224, 224)):
         img_array = np.array(image)
         
         # RGB formatına çevir (eğer RGBA ise)
-        if img_array.shape[-1] == 4:
+        if len(img_array.shape) == 3 and img_array.shape[-1] == 4:
             img_array = img_array[:, :, :3]  # Alpha kanalını kaldır
         
-        # PIL ile yeniden boyutlandır (OpenCV yerine)
+        # Eğer grayscale ise RGB'ye çevir
+        if len(img_array.shape) == 2:
+            img_array = np.stack([img_array] * 3, axis=-1)
+        
+        # PIL ile yeniden boyutlandır
         image_resized = image.resize(target_size, Image.Resampling.LANCZOS)
         img_resized = np.array(image_resized)
+        
+        # RGB'ye çevir (tekrar kontrol)
+        if len(img_resized.shape) == 3 and img_resized.shape[-1] == 4:
+            img_resized = img_resized[:, :, :3]
+        elif len(img_resized.shape) == 2:
+            img_resized = np.stack([img_resized] * 3, axis=-1)
         
         # Normalize et (0-1 arası)
         img_normalized = img_resized.astype(np.float32) / 255.0
@@ -164,14 +215,16 @@ def preprocess_image(image, target_size=(224, 224)):
         st.error(f"Görüntü işleme hatası: {str(e)}")
         return None
 
-# Tahmin fonksiyonu
+# Tahmin fonksiyonu - Düzeltildi
 def predict_tumor(image, models):
     """Tümör tahmini yap"""
     if models is None:
+        st.error("❌ Modeller yüklenemedi")
         return None, None
         
     processed_img = preprocess_image(image)
     if processed_img is None:
+        st.error("❌ Görüntü işlenemedi")
         return None, None
     
     results = {}
@@ -182,28 +235,43 @@ def predict_tumor(image, models):
             # Görüntüyü flatten et
             img_flat = processed_img.flatten().reshape(1, -1)
             rf_pred = models['rf'].predict(img_flat)[0]
-            rf_prob = models['rf'].predict_proba(img_flat)[0]
+            
+            # Predict_proba varsa kullan
+            if hasattr(models['rf'], 'predict_proba'):
+                rf_prob = models['rf'].predict_proba(img_flat)[0]
+            else:
+                # Eğer predict_proba yoksa dummy probabilities oluştur
+                rf_prob = np.zeros(4)
+                rf_prob[rf_pred] = 0.85
+                rf_prob = rf_prob / rf_prob.sum()
+            
             results['rf'] = {
                 'prediction': rf_pred,
                 'probabilities': rf_prob,
                 'max_prob': max(rf_prob)
             }
+            st.info("✅ Random Forest tahmini tamamlandı")
+            
         except Exception as e:
-            st.error(f"Random Forest tahmin hatası: {str(e)}")
+            st.error(f"❌ Random Forest tahmin hatası: {str(e)}")
+    else:
+        st.error("❌ Random Forest modeli mevcut değil")
     
     # CNN tahmini
     if models.get('cnn') is not None:
         try:
             img_batch = np.expand_dims(processed_img, axis=0)
-            cnn_pred = models['cnn'].predict(img_batch)[0]
+            cnn_pred = models['cnn'].predict(img_batch, verbose=0)[0]
             cnn_class = np.argmax(cnn_pred)
             results['cnn'] = {
                 'prediction': cnn_class,
                 'probabilities': cnn_pred,
                 'max_prob': max(cnn_pred)
             }
+            st.info("✅ CNN tahmini tamamlandı")
+            
         except Exception as e:
-            st.error(f"CNN tahmin hatası: {str(e)}")
+            st.error(f"❌ CNN tahmin hatası: {str(e)}")
     
     return results, processed_img
 
@@ -246,6 +314,16 @@ def main():
         else:
             st.warning("⚠️ TensorFlow mevcut değil")
         st.info("✅ Scikit-learn aktif")
+        
+        # Debug bilgileri
+        if st.button("🔍 Debug Bilgileri"):
+            st.write("**Mevcut dosyalar:**")
+            models_dir = Path("models")
+            if models_dir.exists():
+                for file in models_dir.iterdir():
+                    st.write(f"- {file.name}")
+            else:
+                st.write("models/ klasörü yok")
     
     # Model yükleme
     with st.container():
@@ -277,7 +355,8 @@ def main():
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.image(image, caption="Yüklenen MRI Görüntüsü", use_column_width=True)
+            # Düzeltme: use_column_width -> use_container_width
+            st.image(image, caption="Yüklenen MRI Görüntüsü", use_container_width=True)
             
             # Görüntü bilgileri
             st.caption(f"📏 Boyut: {image.size[0]} x {image.size[1]} piksel")
@@ -286,8 +365,8 @@ def main():
         
         with col2:
             if st.button("🔍 Analiz Et", type="primary", use_container_width=True):
-                if models is None:
-                    st.error("❌ Model yüklenemedi. Lütfen modelleri kontrol edin.")
+                if models is None or (models.get('rf') is None and models.get('cnn') is None):
+                    st.error("❌ Hiçbir model yüklenemedi. Lütfen modelleri kontrol edin.")
                 else:
                     with st.spinner("Analiz ediliyor..."):
                         results, processed_img = predict_tumor(image, models)
