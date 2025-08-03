@@ -1,5 +1,11 @@
-streamlit
+echo "streamlit
 pillow
 numpy
 pandas
 requests
+joblib
+scikit-learn
+tensorflow-cpu
+opencv-python-headless
+matplotlib
+seaborn" > requirements.txt
