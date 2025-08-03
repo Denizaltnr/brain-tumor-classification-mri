@@ -9,4 +9,4 @@ pandas==2.0.3
 matplotlib==3.7.2
 seaborn==0.12.2
 requests==2.31.0
-echo "web: streamlit run app.py --server.port=\$PORT --server.address=0.0.0.0" > Procfile
+
