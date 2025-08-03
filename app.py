@@ -5,6 +5,55 @@ from PIL import Image
 import joblib
 from tensorflow.keras.models import load_model
 from utils.preprocessing import preprocess_image, flatten_for_classic_models
+import streamlit as st
+import requests
+import zipfile
+import os
+from pathlib import Path
+
+@st.cache_resource
+def download_models():
+    """GitHub Releases'dan modelleri indir"""
+    models_dir = Path("models")
+    
+    if models_dir.exists() and any(models_dir.iterdir()):
+        return  # Modeller zaten var
+    
+    models_dir.mkdir(exist_ok=True)
+    
+    with st.spinner("Model dosyaları indiriliyor..."):
+        try:
+            # GitHub Releases API
+            api_url = "https://api.github.com/repos/Denizaltnr/brain-tumor-classification-mri/releases/latest"
+            response = requests.get(api_url)
+            release_data = response.json()
+            
+            for asset in release_data['assets']:
+                if asset['name'].endswith('.zip'):
+                    download_url = asset['browser_download_url']
+                    
+                    # Dosyayı indir
+                    file_response = requests.get(download_url, stream=True)
+                    zip_path = f"temp_{asset['name']}"
+                    
+                    with open(zip_path, 'wb') as f:
+                        for chunk in file_response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
+                    # Zip'i çıkar
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall('models')
+                    
+                    os.remove(zip_path)
+                    st.success("Modeller başarıyla yüklendi!")
+                    return
+                    
+        except Exception as e:
+            st.error(f"Model yükleme hatası: {e}")
+            st.info("Lütfen manuel olarak model dosyalarını yükleyin.")
+
+# Ana uygulamanın başında çağır
+download_models()
 
 # 🔍 Model yolları
 MODEL_PATHS = {
