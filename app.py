@@ -6,6 +6,9 @@ import joblib
 from tensorflow.keras.models import load_model
 from utils.preprocessing import preprocess_image, flatten_for_classic_models
 
+
+
+
 # 🔍 Model yolları
 MODEL_PATHS = {
     "CNN": "models/cnn_model.h5",
