@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import joblib
-import cv2
 import matplotlib.pyplot as plt
 import seaborn as sns
 import requests
@@ -148,14 +147,13 @@ def preprocess_image(image, target_size=(224, 224)):
         # PIL'den numpy array'e çevir
         img_array = np.array(image)
         
-        # RGB'ye çevir (eğer RGBA ise)
+        # RGB formatına çevir (eğer RGBA ise)
         if img_array.shape[-1] == 4:
-            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
-        elif len(img_array.shape) == 3 and img_array.shape[-1] == 3:
-            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            img_array = img_array[:, :, :3]  # Alpha kanalını kaldır
         
-        # Yeniden boyutlandır
-        img_resized = cv2.resize(img_array, target_size)
+        # PIL ile yeniden boyutlandır (OpenCV yerine)
+        image_resized = image.resize(target_size, Image.Resampling.LANCZOS)
+        img_resized = np.array(image_resized)
         
         # Normalize et (0-1 arası)
         img_normalized = img_resized.astype(np.float32) / 255.0
