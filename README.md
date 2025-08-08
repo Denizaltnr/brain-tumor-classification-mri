@@ -13,11 +13,11 @@ Bu proje, MRI görüntülerinden beyin tümörü sınıflandırması yapan bir S
 
 | Model | Accuracy | Size | Type |
 |-------|----------|------|------|
-| CNN | ~95% | 124 KB | Deep Learning |
-| VGG16 | ~96% | 132 KB | Transfer Learning |
-| MobileNet | ~94% | 163 KB | Mobile Optimized |
-| SVM | ~88% | 532 KB | Classical ML |
-| Random Forest | ~85% | 4.7 KB | Ensemble |
+| CNN | ~70.65% | 124 KB | Deep Learning |
+| VGG16 | ~72.21% | 132 KB | Transfer Learning |
+| MobileNet | ~76.88% | 163 KB | Mobile Optimized |
+| SVM | ~94.60% | 532 KB | Classical ML |
+| Random Forest | ~85.54% | 4.7 KB | Ensemble |
 
 ## 🚀 Hızlı Başlangıç
 
