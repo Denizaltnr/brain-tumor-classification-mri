@@ -402,8 +402,8 @@ Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için `LICENSE` dosy
 ## 👨‍💻 Geliştirici
 
 **Your Name**
-- GitHub: [@your-username](https://github.com/Denizaltnr)
-- LinkedIn: [Your Name](https://linkedin.com/in/deniz-altuner-a58612180)
+- GitHub: [@Denizaltnr](https://github.com/Denizaltnr)
+- LinkedIn: [Deniz Altuner](https://linkedin.com/in/deniz-altuner-a58612180)
 - Email: ben_deniz_melisa@outlook.com
 
 ## 🙏 Teşekkürler
